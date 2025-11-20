@@ -97,8 +97,8 @@ func main() {
 }
 
 func (lg *LoadGenerator) warmup() {
-	// Populate 1000 keys for testing
-	for i := 0; i < 1000; i++ {
+	// Populate 100000 keys for testing
+	for i := 0; i < 100000; i++ {
 		key := fmt.Sprintf("key_%d", i)
 		value := fmt.Sprintf("value_%d", i)
 		lg.createKey(key, value)
@@ -135,7 +135,7 @@ func (lg *LoadGenerator) executeRequest(rng *rand.Rand) {
 		err = lg.workloadGetPut(rng)
 	}
 
-	latency := time.Since(start).Milliseconds()
+	latency := time.Since(start).Microseconds()
 	atomic.AddUint64(&lg.stats.totalLatencyMs, uint64(latency))
 
 	if err != nil {
@@ -165,7 +165,7 @@ func (lg *LoadGenerator) workloadGetAll(rng *rand.Rand) error {
 
 func (lg *LoadGenerator) workloadGetPopular(rng *rand.Rand) error {
 	// Read from small set of popular keys (cache hit)
-	key := fmt.Sprintf("key_%d", rng.Intn(50))
+	key := fmt.Sprintf("key_%d", rng.Intn(1000))
 	return lg.readKey(key)
 }
 
@@ -251,7 +251,7 @@ func (lg *LoadGenerator) printResults(elapsed float64) {
 	fmt.Printf("Successful Requests:   %d\n", success)
 	fmt.Printf("Failed Requests:       %d\n", failed)
 	fmt.Printf("Average Throughput:    %.2f requests/sec\n", throughput)
-	fmt.Printf("Average Response Time: %.2f ms\n", avgLatency)
+	fmt.Printf("Average Response Time: %.2f microsec\n", avgLatency)
 	fmt.Println(strings.Repeat("=", 60))
 }
 
