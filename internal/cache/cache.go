@@ -5,75 +5,129 @@ import (
 	"sync"
 )
 
+const SHARD_COUNT = 32
+
 type entry struct {
 	key   string
 	value string
 }
 
-type LRUCache struct {
+type lruShard struct {
 	capacity int
 	cache    map[string]*list.Element
 	lru      *list.List
-	mu       sync.RWMutex
+	mu       sync.Mutex 
 	hits     uint64
 	misses   uint64
 }
 
-func NewLRUCache(capacity int) *LRUCache {
-	return &LRUCache{
-		capacity: capacity,
-		cache:    make(map[string]*list.Element),
-		lru:      list.New(),
-	}
+// ShardedCache is the wrapper that manages the 8 internal shards.
+type ShardedCache struct {
+	shards [SHARD_COUNT]*lruShard
 }
 
-func (c *LRUCache) Get(key string) (string, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// NewShardedCache creates 8 distinct LRU caches, dividing capacity among them.
+func NewShardedCache(totalCapacity int) *ShardedCache {
+	sc := &ShardedCache{}
 
-	if elem, ok := c.cache[key]; ok {
-		c.lru.MoveToFront(elem)
-		c.hits++
+	
+	shardCap := totalCapacity / SHARD_COUNT
+	if shardCap < 1 {
+		shardCap = 1
+	}
+
+	// Initialize each shard
+	for i := 0; i < SHARD_COUNT; i++ {
+		sc.shards[i] = &lruShard{
+			capacity: shardCap,
+			cache:    make(map[string]*list.Element),
+			lru:      list.New(),
+		}
+	}
+
+	return sc
+}
+
+
+func hash(key string) uint64 {
+	var h uint64 = 14695981039346656037
+	for i := 0; i < len(key); i++ {
+		h ^= uint64(key[i])
+		h *= 1099511628211
+	}
+	return h
+}
+
+// getShard determines which shard owns the key
+func (sc *ShardedCache) getShard(key string) *lruShard {
+	h := hash(key)
+	// Fast bitwise modulo: h % 8 == h & 7
+	return sc.shards[h&(SHARD_COUNT-1)]
+}
+
+// --- Public API ---
+
+func (sc *ShardedCache) Get(key string) (string, bool) {
+	shard := sc.getShard(key)
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	if elem, ok := shard.cache[key]; ok {
+		shard.lru.MoveToFront(elem)
+		shard.hits++
 		return elem.Value.(*entry).value, true
 	}
-	c.misses++
+	shard.misses++
 	return "", false
 }
 
-func (c *LRUCache) Put(key, value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (sc *ShardedCache) Put(key, value string) {
+	shard := sc.getShard(key)
 
-	if elem, ok := c.cache[key]; ok {
-		c.lru.MoveToFront(elem)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	// Check for update
+	if elem, ok := shard.cache[key]; ok {
+		shard.lru.MoveToFront(elem)
 		elem.Value.(*entry).value = value
 		return
 	}
 
-	if c.lru.Len() >= c.capacity {
-		oldest := c.lru.Back()
+	// Check for eviction
+	if shard.lru.Len() >= shard.capacity {
+		oldest := shard.lru.Back()
 		if oldest != nil {
-			c.lru.Remove(oldest)
-			delete(c.cache, oldest.Value.(*entry).key)
+			shard.lru.Remove(oldest)
+			delete(shard.cache, oldest.Value.(*entry).key)
 		}
 	}
 
-	elem := c.lru.PushFront(&entry{key: key, value: value})
-	c.cache[key] = elem
+	// Add new
+	elem := shard.lru.PushFront(&entry{key: key, value: value})
+	shard.cache[key] = elem
 }
 
-func (c *LRUCache) Delete(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (sc *ShardedCache) Delete(key string) {
+	shard := sc.getShard(key)
 
-	if elem, ok := c.cache[key]; ok {
-		c.lru.Remove(elem)
-		delete(c.cache, key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	if elem, ok := shard.cache[key]; ok {
+		shard.lru.Remove(elem)
+		delete(shard.cache, key)
 	}
 }
 
-func (c *LRUCache) GetStats() (hits, misses uint64) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.hits, c.misses
+func (sc *ShardedCache) GetStats() (totalHits, totalMisses uint64) {
+	// Aggregate stats from all shards
+	for _, shard := range sc.shards {
+		shard.mu.Lock()
+		totalHits += shard.hits
+		totalMisses += shard.misses
+		shard.mu.Unlock()
+	}
+	return
 }
