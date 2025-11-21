@@ -30,10 +30,15 @@ type Stats struct {
 }
 
 type LoadGenerator struct {
-	serverURL string
-	workload  string
-	client    *http.Client
-	stats     *Stats
+	serverURL  string
+	workload   string
+	client     *http.Client
+	stats      *Stats
+	fixedValue string
+}
+
+func makeValue() string {
+	return strings.Repeat("A", 1024*10)
 }
 
 func main() {
@@ -42,19 +47,56 @@ func main() {
 		log.Printf("Warning: Could not load .env file: %v", err)
 	}
 
-	// Command-line flags with env variable defaults
 	serverURL := flag.String("server", config.GetEnv("LOAD_SERVER_URL", "http://localhost:8080"), "Server URL")
-	clients := flag.Int("clients", getEnvAsInt("LOAD_CLIENTS", 10), "Number of concurrent clients")
+	clients := flag.Int("clients", 0, "Number of concurrent clients (0 = auto loop mode)")
 	duration := flag.Int("duration", getEnvAsInt("LOAD_DURATION", 60), "Test duration in seconds")
 	workload := flag.String("workload", config.GetEnv("LOAD_WORKLOAD", "getput"), "Workload type: putall, getall, getpopular, getput")
 	flag.Parse()
 
-	log.Printf("Starting load generator: %d clients, %d seconds, workload=%s", *clients, *duration, *workload)
+	// fixedValue := makeValue()
+
+	// Create LoadGenerator core object (for warmup use)
+	// lg := &LoadGenerator{
+	// 	serverURL: *serverURL,
+	// 	workload:  *workload,
+	// 	client: &http.Client{
+	// 		Timeout: 30 * time.Second,
+	// 		Transport: &http.Transport{
+	// 			MaxIdleConns:        1000,
+	// 			MaxIdleConnsPerHost: 1000,
+	// 			IdleConnTimeout:     90 * time.Second,
+	// 		},
+	// 	},
+	// 	stats:      &Stats{},
+	// 	fixedValue: fixedValue,
+	// }
+
+	// Warmup ONCE
+	// log.Println("Warming up database (one-time)...")
+	// lg.warmup()
+
+	// Loop mode
+	clientSteps := []int{3, 5, 10, 20, 30, 50}
+	if *clients == 0 {
+		for _, c := range clientSteps {
+			runTest(*serverURL, c, *duration, *workload)
+		}
+		return
+	}
+
+	// Single-run mode
+	runTest(*serverURL, *clients, *duration, *workload)
+}
+
+func runTest(server string, clients int, duration int, workload string) {
+	log.Printf("\n\n=== Running Load Test with %d clients ===\n", clients)
+
+	fixedValue := makeValue()
 
 	stats := &Stats{}
 	lg := &LoadGenerator{
-		serverURL: *serverURL,
-		workload:  *workload,
+		serverURL: server,
+		workload:  workload,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -63,21 +105,17 @@ func main() {
 				IdleConnTimeout:     90 * time.Second,
 			},
 		},
-		stats: stats,
+		stats:      stats,
+		fixedValue: fixedValue,
 	}
 
-	// Warmup - populate some data
-	log.Println("Warming up...")
-	lg.warmup()
-
-	// Run load test
 	log.Println("Starting load test...")
 	startTime := time.Now()
 
 	var wg sync.WaitGroup
 	stopChan := make(chan struct{})
 
-	for i := 0; i < *clients; i++ {
+	for i := 0; i < clients; i++ {
 		wg.Add(1)
 		go func(clientID int) {
 			defer wg.Done()
@@ -85,14 +123,11 @@ func main() {
 		}(i)
 	}
 
-	// Stop after duration
-	time.Sleep(time.Duration(*duration) * time.Second)
+	time.Sleep(time.Duration(duration) * time.Second)
 	close(stopChan)
 	wg.Wait()
 
 	elapsed := time.Since(startTime).Seconds()
-
-	// Print results
 	lg.printResults(elapsed)
 }
 
@@ -100,8 +135,9 @@ func (lg *LoadGenerator) warmup() {
 	// Populate 100000 keys for testing
 	for i := 0; i < 100000; i++ {
 		key := fmt.Sprintf("key_%d", i)
-		value := fmt.Sprintf("value_%d", i)
-		lg.createKey(key, value)
+		// value := fmt.Sprintf("value_%d", i)
+		// value := makeValue(i)
+		lg.createKey(key, lg.fixedValue)
 	}
 }
 
@@ -146,20 +182,22 @@ func (lg *LoadGenerator) executeRequest(rng *rand.Rand) {
 }
 
 func (lg *LoadGenerator) workloadPutAll(rng *rand.Rand) error {
-	if rng.Intn(2) == 0 {
-		// Create
-		key := fmt.Sprintf("key_%d", rng.Intn(10000))
-		value := fmt.Sprintf("value_%d", rng.Intn(10000))
-		return lg.createKey(key, value)
-	}
+
+	// Create
+	// key := fmt.Sprintf("key_%d", rng.Intn(100000))
+	key := "key_1"
+	// value := fmt.Sprintf("value_%d", rng.Intn(10000))
+	// value := makeValue(10)
+	return lg.createKey(key, lg.fixedValue)
+
 	// Delete
-	key := fmt.Sprintf("key_%d", rng.Intn(10000))
-	return lg.deleteKey(key)
+	// key := fmt.Sprintf("key_%d", rng.Intn(100000))
+	// return lg.deleteKey(key)
 }
 
 func (lg *LoadGenerator) workloadGetAll(rng *rand.Rand) error {
 	// Read with unique keys (cache miss)
-	key := fmt.Sprintf("key_%d", rng.Intn(100000))
+	key := fmt.Sprintf("keyy_%d", rng.Intn(100000))
 	return lg.readKey(key)
 }
 
@@ -178,8 +216,9 @@ func (lg *LoadGenerator) workloadGetPut(rng *rand.Rand) error {
 		return lg.readKey(key)
 	} else if op < 9 {
 		// 20% creates
-		value := fmt.Sprintf("value_%d", rng.Intn(10000))
-		return lg.createKey(key, value)
+		// value := fmt.Sprintf("value_%d", rng.Intn(10000))
+		// value := makeValue(10)
+		return lg.createKey(key, lg.fixedValue)
 	}
 	// 10% deletes
 	return lg.deleteKey(key)
