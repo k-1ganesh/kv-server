@@ -10,7 +10,7 @@ import (
 )
 
 type KVServer struct {
-	cache *cache.LRUCache
+	cache *cache.ShardedCache
 	db    *database.PostgresDB
 }
 
@@ -27,7 +27,7 @@ type Response struct {
 
 func NewKVServer(cacheSize int, db *database.PostgresDB) *KVServer {
 	return &KVServer{
-		cache: cache.NewLRUCache(cacheSize),
+		cache: cache.NewShardedCache(cacheSize),
 		db:    db,
 	}
 }
