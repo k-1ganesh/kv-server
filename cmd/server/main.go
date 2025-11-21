@@ -23,7 +23,6 @@ func main() {
 
 	// Command-line flags with env variable defaults
 	port := flag.Int("port", getEnvAsInt("SERVER_PORT", 8080), "Server port")
-	workers := flag.Int("workers", getEnvAsInt("WORKER_THREADS", 10), "Number of worker threads")
 	cacheSize := flag.Int("cache-size", getEnvAsInt("CACHE_SIZE", 1000), "Cache capacity")
 
 	dbHost := flag.String("db-host", config.GetEnv("DB_HOST", "localhost"), "Database host")
@@ -48,7 +47,7 @@ func main() {
 
 	// Configure HTTP server with thread pool
 	httpServer := &http.Server{
-		Addr:           fmt.Sprintf(":%d", *port),
+		Addr:           fmt.Sprintf("0.0.0.0:%d", *port),
 		Handler:        kvServer,
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   10 * time.Second,
@@ -56,7 +55,7 @@ func main() {
 	}
 
 	// Start stats printer
-	go printStats(kvServer)
+	// go printStats(kvServer)
 
 	// Handle graceful shutdown
 	go func() {
@@ -67,26 +66,26 @@ func main() {
 		os.Exit(0)
 	}()
 
-	log.Printf("Server starting on port %d with %d workers and cache size %d", *port, *workers, *cacheSize)
+	log.Printf("Server starting on port %d with cache size %d", *port, *cacheSize)
 	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
 
-func printStats(kvServer *server.KVServer) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+// func printStats(kvServer *server.KVServer) {
+// 	ticker := time.NewTicker(30 * time.Second)
+// 	defer ticker.Stop()
 
-	for range ticker.C {
-		hits, misses := kvServer.GetCacheStats()
-		total := hits + misses
-		hitRate := float64(0)
-		if total > 0 {
-			hitRate = float64(hits) / float64(total) * 100
-		}
-		log.Printf("Cache Stats - Hits: %d, Misses: %d, Hit Rate: %.2f%%", hits, misses, hitRate)
-	}
-}
+// 	for range ticker.C {
+// 		hits, misses := kvServer.GetCacheStats()
+// 		total := hits + misses
+// 		hitRate := float64(0)
+// 		if total > 0 {
+// 			hitRate = float64(hits) / float64(total) * 100
+// 		}
+// 		log.Printf("Cache Stats - Hits: %d, Misses: %d, Hit Rate: %.2f%%", hits, misses, hitRate)
+// 	}
+// }
 
 func getEnvAsInt(key string, defaultValue int) int {
 	valueStr := os.Getenv(key)
